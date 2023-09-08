@@ -1,9 +1,14 @@
-<script setup lang="ts">
+<script setup lang='ts'>
+import { Canvas } from 'konva/lib/Canvas';
+import { Image } from 'konva/lib/shapes/Image';
+import { Stage } from 'konva/lib/Stage';
+import { Transformer } from 'konva/lib/shapes/Transformer';
+import { setgroups } from 'process';
+import { arrayBuffer } from 'stream/consumers';
 import { ref, onMounted, onUnmounted } from 'vue'
 
 const windowWidth = ref(window.innerWidth)
 const windowHeight = ref(window.innerHeight)
-
 
 const handleWindowResize = () => {
   windowWidth.value = window.innerWidth;
@@ -17,32 +22,127 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
 })
+
+
+const transformer = ref(null)
+const stage = ref(null)
+
+class RefImage {
+  name: string
+  image: HTMLImageElement
+  x: number
+  y: number
+  rotation: number
+  scaleX: number
+  scaleY: number
+  width: number
+  height: number
+  readonly draggable = true
+
+  constructor(src: string) {
+    this.name = self.crypto.randomUUID()
+    this.image = new window.Image()
+    this.image.src = src
+    this.x = 0
+    this.y = 0
+    this.width = 200
+    this.height = 300
+    this.scaleX = 1.0
+    this.scaleY = 1.0
+    this.rotation = 0
+  }
+}
+
+class RefCavnas {
+  id: number
+  active: boolean
+  images: RefImage[]
+  constructor(id: number, active: boolean) {
+    this.id = id
+    this.images = []
+    this.active = active
+  }
+}
+
+const active_canvas_id = ref(0)
+const canvases = Array.from(Array(6), (v, k) => (new RefCavnas(k, v == 0)))
+var selectedImgUUID: string = ''
+
+canvases[0].images.push(new RefImage('https://konvajs.github.io/assets/lion.png'))
+
+const configTransFormer = ref({
+  anchorStroke: 'red',
+  anchorFill: 'yellow',
+  anchorSize: 20,
+  borderStroke: 'green',
+  borderDash: [3, 3],
+  keepratio: true,
+})
+
+const menu_items = [
+  { title: 'Home', icon: 'mdi-home' },
+  { title: 'About', icon: 'mdi-help-box' },
+  { title: 'Contact', icon: 'mdi-email' }
+]
+
+function switchCanvas(id: number) {
+  // filter out click-again case
+  if (id == active_canvas_id.value) { return }
+
+  // switch the active flag for button
+  active_canvas_id.value = id
+  // TODO: unload the current canvas and load new canvas
+  //       maybe do some caching or memory cleaning?
+  // TODO: clean up the transformer
+}
+
+function handleStageMouseDown(e) {
+  console.log(e)
+  console.log("stage")
+  console.log(stage.value)
+  // if click on empty area - remove all transformers
+  if (e.target === stage.value) {
+    transformer.detach()
+    stage.value?.batchDraw()
+  }
+}
+
+function handleImageMouseDown(e) {
+  console.log(stage.value)
+  stage.value?.find('Transformer').forEach((t) => t.destroy());
+  // create new transformer
+  transformer.value?.attachTo(e.target) // no idea what to do here ...
+  stage.value?.batchDraw()
+}
+
 </script>
 
 
 
 <template>
   <header>
-    <v-toolbar absolute density="compact">
-      <v-btn variant="flat" color="primary">
+    <meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>
+
+    <v-toolbar absolute density='compact'>
+      <v-btn variant='flat' color='primary'>
         Menu
-        <v-menu activator="parent">
-          <v-list nav density="compact">
-            <v-list-item v-for="(item, index) in items" :key="index" :value="index">
+        <v-menu activator='parent'>
+          <v-list nav density='compact'>
+            <v-list-item v-for='(item, index) in menu_items' :key='index' :value='index'>
               <v-list-item-title> {{ item.title }} </v-list-item-title>
             </v-list-item>
           </v-list>
         </v-menu>
       </v-btn>
 
-      <v-btn-group rounded="0" class="ml-3" density="compact">
-        <v-btn :variant="item.active ? 'tonal' : 'text'" class="navbtn px-1 ma-1" v-for="(item, index) in canvases"
-          :key="index" @click="switchCanvas(item.id)">
+      <v-btn-group rounded='0' class='ml-3' density='compact'>
+        <v-btn :variant="active_canvas_id === item.id ? 'tonal' : 'text'" class='navbtn px-1 ma-1'
+          v-for='(item, index) in canvases' :key='index' @click='switchCanvas(item.id)'>
           {{ item.id }}
         </v-btn>
       </v-btn-group>
 
-      <v-toolbar-items class="ml-6">
+      <v-toolbar-items class='ml-6'>
         <ul>
           <li>Screen Width: {{ windowWidth }}</li>
           <li>Screen Height: {{ windowHeight }}</li>
@@ -53,12 +153,13 @@ onUnmounted(() => {
 
   <!-- TODO: 两个layer，一个是编辑中的对象（可能多个），另一个是剩余的 -->
   <!-- TODO: v-stage最终也会作为动态对象保存，保存一个-->
-  <v-stage :width="windowWidth" :height="windowHeight">
+  <v-stage :width='windowWidth' :height='windowHeight' :ref="stage" @mousedown="handleStageMouseDown"
+    @touchStart="handleStageMouseDown">
     <v-layer>
-      <v-circle :config="configCircle"></v-circle>
-    </v-layer>
-    <v-layer>
-      <v-circle :config="configCircle"></v-circle>
+      <v-image v-for='ref_image in canvases[active_canvas_id].images' :config='ref_image'
+        @mousedown="handleImageMouseDown" @touchStart="handleImageMouseDown" />
+      <!-- v-transformer不靠谱，考虑用vanilla json做一个 -->
+      <v-transformer :config='configTransFormer' :ref='transformer' />
     </v-layer>
   </v-stage>
 </template>
@@ -77,51 +178,3 @@ header {
   min-width: 2em
 }
 </style>
-
-<script lang="ts">
-const canvases = ref([
-  { id: 1, title: "Canvas 1", active: true },
-  { id: 2, title: "Canvas 2", active: false },
-  { id: 3, title: "Canvas 3", active: false },
-  { id: 4, title: "Canvas 4", active: false },
-  { id: 5, title: "Canvas 5", active: false },
-  { id: 6, title: "Canvas 6", active: false },
-])
-export default {
-  data: () => ({
-    configKonva: {
-      width: 100,
-      height: 100
-    },
-    configCircle: {
-      x: 100,
-      y: 100,
-      radius: 70,
-      fill: "red",
-      stroke: "black",
-      strokeWidth: 4,
-      draggable: "true"
-    },
-    items: [
-      { title: "Home", icon: "mdi-home" },
-      { title: "About", icon: "mdi-help-box" },
-      { title: "Contact", icon: "mdi-email" }
-    ],
-    canvases
-  }),
-};
-
-function switchCanvas(id: number) {
-  // TODO: filter out self-clicking cases
-  // switch the active flag for button
-  canvases.value.forEach((item) => {
-    if (item.id === id) {
-      item.active = true;
-    } else {
-      item.active = false;
-    }
-  });
-  // TODO: unload the current canvas and load new canvas
-}
-</script>
-
