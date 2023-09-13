@@ -8,3 +8,9 @@
 // @use 'vuetify/settings' with (
 //   $color-pack: false
 // );
+
+
+body {
+  overflow: hidden;
+  touch-action: none;
+}

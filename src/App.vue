@@ -1,6 +1,9 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <script setup lang='ts'>
 import { ref, onMounted, onUnmounted } from 'vue'
 import Konva from 'konva';
+import { nanoid } from 'nanoid'
 import { useTheme } from 'vuetify/lib/framework.mjs';
 
 
@@ -36,8 +39,8 @@ onUnmounted(() => {
 const transformerConfig = {
   anchorStroke: 'white',
   anchorFill: '#168e99',
-  anchorSize: 10,
-  anchorCornerRadius: 5,
+  anchorSize: 16,
+  anchorCornerRadius: 8,
   borderStroke: '#168e99',
   borderStrokeWidth: 2,
   borderDash: [1, 0],
@@ -53,7 +56,7 @@ class RefImage extends Konva.Image {
       draggable: true,
       image: data
     })
-    this.id(self.crypto.randomUUID())
+    this.id(nanoid())
   }
 }
 
@@ -106,13 +109,20 @@ function flushBackSelectedImgs() {
 
 function handleStageMouseDown(e: any) {
   const current_canvas = layers[active_canvas_id.value]
+  console.log(e)
+  console.log(e.evt.type)
   if (e.target == null || stage.value == null) { return }
   else if (e.target === e.target.getStage()) {
     // if click on empty area - remove all transformers
     console.log('click on stage')
     flushBackSelectedImgs()
-    // enable draggable for stage
-    stage.value.setDraggable(true)
+    // enable draggable for stage for middle-mosue-click
+    if ((e.evt.type === 'mousedown' && e.evt.button == 1)
+      ||(e.evt.type === 'touchstart' && e.evt.touches.length == 1))
+    {
+      console.log('canvas drag')
+      stage.value.startDrag()
+    }
   } else if (e.target.getParent().className === 'Transformer') {
     // if click on transformer - do nothing
     console.log('click on transformer')
@@ -130,8 +140,9 @@ function handleStageMouseDown(e: any) {
       // the current image is already selected, abort
       return
     } else {
-      // disable draggable for stage
-      stage.value.setDraggable(false)
+      // flush back the current selected image
+      // TODO: add selection rectangle to multi-select 
+      flushBackSelectedImgs()
       // move the image from current canvas to select layer
       refimg.moveTo(select_layer)
 
@@ -165,47 +176,48 @@ function loadCanvas() {
   // TODO: maybe restore data from json
   // instantialize the ref_images into canvas
 
-  // way to add blob konva.image
-  // const url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg=="
-  // fetch(url).then(res=>res.blob()).then((blob)=>{
-  //   const img = new Image()
-  //   img.src = URL.createObjectURL(blob)
-  //   img.onload = () => {
-  //     const pattern = new Konva.Image({
-  //       x: 100,
-  //       y: 100,
-  //       image: img,
-  //       width: 1000,
-  //       height: 1000,
-  //       draggable: true,
-  //     })
-  //     layer.add(pattern)
-  //     layer.batchDraw()
-  //   }
-  // })
 }
 
 function initKonva() {
   stage.value = new Konva.Stage({
     container: 'konva_container',   // id of container <div>
     width: windowWidth,
-    height: windowHeight
+    height: windowHeight,
+    draggable: false
   })
   UpdateKonvaCanvasSize()
   stage.value?.on('mousedown', handleStageMouseDown)
+  stage.value?.on('touchstart', handleStageMouseDown)
 
-  const img0 = new RefImage('https://konvajs.github.io/assets/lion.png')
+  const img0 = new RefImage('https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png')
   const img1 = new RefImage('https://konvajs.github.io/assets/lion.png')
   const img2 = new RefImage('https://konvajs.github.io/assets/lion.png')
   layers[0].add(img0)
   layers[0].add(img1)
   layers[2].add(img2)
 
+  // add blob konva.image
+  const url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAApgAAAKYB3X3/OAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAANCSURBVEiJtZZPbBtFFMZ/M7ubXdtdb1xSFyeilBapySVU8h8OoFaooFSqiihIVIpQBKci6KEg9Q6H9kovIHoCIVQJJCKE1ENFjnAgcaSGC6rEnxBwA04Tx43t2FnvDAfjkNibxgHxnWb2e/u992bee7tCa00YFsffekFY+nUzFtjW0LrvjRXrCDIAaPLlW0nHL0SsZtVoaF98mLrx3pdhOqLtYPHChahZcYYO7KvPFxvRl5XPp1sN3adWiD1ZAqD6XYK1b/dvE5IWryTt2udLFedwc1+9kLp+vbbpoDh+6TklxBeAi9TL0taeWpdmZzQDry0AcO+jQ12RyohqqoYoo8RDwJrU+qXkjWtfi8Xxt58BdQuwQs9qC/afLwCw8tnQbqYAPsgxE1S6F3EAIXux2oQFKm0ihMsOF71dHYx+f3NND68ghCu1YIoePPQN1pGRABkJ6Bus96CutRZMydTl+TvuiRW1m3n0eDl0vRPcEysqdXn+jsQPsrHMquGeXEaY4Yk4wxWcY5V/9scqOMOVUFthatyTy8QyqwZ+kDURKoMWxNKr2EeqVKcTNOajqKoBgOE28U4tdQl5p5bwCw7BWquaZSzAPlwjlithJtp3pTImSqQRrb2Z8PHGigD4RZuNX6JYj6wj7O4TFLbCO/Mn/m8R+h6rYSUb3ekokRY6f/YukArN979jcW+V/S8g0eT/N3VN3kTqWbQ428m9/8k0P/1aIhF36PccEl6EhOcAUCrXKZXXWS3XKd2vc/TRBG9O5ELC17MmWubD2nKhUKZa26Ba2+D3P+4/MNCFwg59oWVeYhkzgN/JDR8deKBoD7Y+ljEjGZ0sosXVTvbc6RHirr2reNy1OXd6pJsQ+gqjk8VWFYmHrwBzW/n+uMPFiRwHB2I7ih8ciHFxIkd/3Omk5tCDV1t+2nNu5sxxpDFNx+huNhVT3/zMDz8usXC3ddaHBj1GHj/As08fwTS7Kt1HBTmyN29vdwAw+/wbwLVOJ3uAD1wi/dUH7Qei66PfyuRj4Ik9is+hglfbkbfR3cnZm7chlUWLdwmprtCohX4HUtlOcQjLYCu+fzGJH2QRKvP3UNz8bWk1qMxjGTOMThZ3kvgLI5AzFfo379UAAAAASUVORK5CYII="
+  fetch(url).then(res=>res.blob()).then((blob)=>{
+    const img = new Image()
+    img.src = URL.createObjectURL(blob)
+    img.onload = () => {
+      const RefImg = new RefImage('')
+      RefImg.image(img)
+      RefImg.setSize({width: 100, height: 100})
+      layers[0].add(RefImg)
+    }
+  })
+
+
   loadCanvas()
+  // TODO: add a procreate(or visref)-like grid background 添加一个类似procreate的网格背景
+  // a konva-react demo ref: https://codesandbox.io/s/react-konva-infinite-grid-kkndq?file=/src/index.js
 }
 
 
 </script>
+
 
 
 
@@ -232,7 +244,6 @@ function initKonva() {
     </v-app-bar>
     <v-main fluid id="konva_container">
     </v-main>
-
   </v-layout>
 
   <!-- TODO: 两个layer，一个是编辑中的对象（可能多个），另一个是剩余的 -->
@@ -252,14 +263,15 @@ function initKonva() {
 header {
   position:absolute;
   line-height: 1.5;
-  max-height: 100vh
+  max-height: 100vh;
 }
 
 .v-toolbar {
-  z-index: 100
+  z-index: 100;
 }
 
+
 .navbtn {
-  min-width: 2em
+  min-width: 2em;
 }
 </style>
