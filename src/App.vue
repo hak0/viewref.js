@@ -73,12 +73,13 @@ onUnmounted(() => {
 const transformerConfig = {
   anchorStroke: 'white',
   anchorFill: '#168e99',
-  anchorSize: 16,
-  anchorCornerRadius: 8,
+  anchorSize: 24,
+  anchorCornerRadius: 12,
   borderStroke: '#168e99',
-  borderStrokeWidth: 2,
+  borderStrokeWidth: 4,
   borderDash: [1, 0],
   keepratio: true,
+  shouldOverdrawWholeArea: true,
 }
 const transformer = new Konva.Transformer(transformerConfig)
 
@@ -100,6 +101,7 @@ class RefLayers extends Konva.Layer {
     super()
     this.index = id
     this.addName('refLayer')
+    this.draggable(false)
   }
 }
 
@@ -140,16 +142,18 @@ function deleteSelectImgs() {
 }
 
 function flushBackSelectedImgs() {
+  const current_canvas = layers[active_canvas_id.value]
   const selected_imgs = select_layer.getChildren(
     (node) => node.getClassName() === 'Image')
   // return if no image selected
   if (selected_imgs.length === 0) { return }
   // move all selected images into current canvas
   selected_imgs.forEach((node) => {
-    node.moveTo(layers[active_canvas_id.value])
+    node.moveTo(current_canvas)
   })
   // remove transformer from select layer
   updateTransformer()
+  current_canvas.listening(true)
 }
 
 function handleStageKeyDown(e: KeyboardEvent) {
@@ -158,38 +162,73 @@ function handleStageKeyDown(e: KeyboardEvent) {
   }
 }
 
+function handleStageWheel(e: any) {
+  // stop default scrolling
+  e.evt.preventDefault();
+
+  // zoom ratio
+  const scaleBy = 1.1
+
+  var pointer = stage.value?.getPointerPosition();
+  if (stage.value == null || pointer == null) { return }
+  var oldScale = stage.value.scaleX();
+
+  var mousePointTo = {
+    x: (pointer.x - stage.value.x()) / oldScale,
+    y: (pointer.y - stage.value.y()) / oldScale,
+  };
+
+
+  // how to scale? Zoom in? Or zoom out?
+  let direction = e.evt.deltaY > 0 ? 1 : -1;
+
+  // when we zoom on trackpad, e.evt.ctrlKey is true
+  // in that case lets revert direction
+  if (e.evt.ctrlKey) {
+    direction = -direction;
+  }
+
+  var newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
+
+  stage.value.scale({ x: newScale, y: newScale });
+
+  var newPos = {
+    x: pointer.x - mousePointTo.x * newScale,
+    y: pointer.y - mousePointTo.y * newScale,
+  };
+  stage.value.position(newPos);
+}
+
 function handleStageMouseDown(e: any) {
   const current_canvas = layers[active_canvas_id.value]
   if (e.target == null || stage.value == null) { return }
-  console.log(e)
-  console.log(e.evt.type)
 
   // enable draggable for stage for middle-mosue-click
   if (e.evt.type === 'mousedown' && e.evt.button == 1) {
     console.log('canvas drag')
+    e.target.stopDrag()
     stage.value.startDrag()
     return
   }
 
   // left-mouse-click
-  if (e.target === e.target.getStage()) {
+  if (e.target.getParent()?.className === 'Transformer') {
+    // if click on transformer - do nothing
+    console.log('click on transformer')
+  } else if (e.target === e.target.getStage()) {
     // if click on empty area - remove all transformers
     console.log('click on stage')
     flushBackSelectedImgs()
-  } else if (e.target.getParent().className === 'Transformer') {
-    // if click on transformer - do nothing
-    console.log('click on transformer')
   } else {
     // click on image
     console.log('click on image')
 
     let clicked_uuid = e.target.id()
-    // check uuid is not null and stage exists
     if (clicked_uuid == '') { return }
 
     const refimg: RefImage = current_canvas.findOne('#' + clicked_uuid)
     if (refimg == null) {
-      // the current image is already selected, abort
+      // the current image is already selected, start dragging
       return
     } else {
       // flush back the current selected image
@@ -197,13 +236,17 @@ function handleStageMouseDown(e: any) {
       flushBackSelectedImgs()
       // move the image from current canvas to select layer
       refimg.moveTo(select_layer)
-
       updateTransformer()
+      refimg.startDrag()
     }
-
   }
 }
 
+let CanvasTouchStartTimetOut: NodeJS.Timeout
+function handleStageTouchStartDebounce(e : any) {
+  clearTimeout(CanvasTouchStartTimetOut)
+  CanvasTouchStartTimetOut = setTimeout(handleStageTouchStart, 100, e)
+}
 function handleStageTouchStart(e: any) {
   const current_canvas = layers[active_canvas_id.value]
   console.log(e)
@@ -213,29 +256,30 @@ function handleStageTouchStart(e: any) {
   // enable draggable for stage for more-than-one finger touch
   if (e.evt.type === 'touchstart' && e.evt.touches.length > 1) {
     console.log('canvas drag')
+    e.target.stopDrag()
     stage.value.startDrag()
     return
   }
 
   // one-finter touch
-  if (e.target === e.target.getStage()) {
+  if (e.target.getParent()?.className === 'Transformer') {
+    // if click on transformer - do nothing
+    console.log('click on transformer')
+  } else if (e.target === e.target.getStage()) {
     // if click on empty area - remove all transformers
     console.log('click on stage')
     flushBackSelectedImgs()
-  } else if (e.target.getParent().className === 'Transformer') {
-    // if click on transformer - do nothing
-    console.log('click on transformer')
   } else {
     // click on image
     console.log('click on image')
 
     let clicked_uuid = e.target.id()
-    // check uuid is not null and stage exists
     if (clicked_uuid == '') { return }
 
     const refimg: RefImage = current_canvas.findOne('#' + clicked_uuid)
     if (refimg == null) {
       // the current image is already selected, abort
+      e.target.startDrag()
       return
     } else {
       // flush back the current selected image
@@ -243,8 +287,9 @@ function handleStageTouchStart(e: any) {
       flushBackSelectedImgs()
       // move the image from current canvas to select layer
       refimg.moveTo(select_layer)
-
+      current_canvas.listening(false)
       updateTransformer()
+      refimg.startDrag()
     }
 
   }
@@ -257,10 +302,15 @@ function updateTransformer() {
   if (selected_imgs.length === 0) {
     // no image selected
     transformer.remove()
+    select_layer.remove()
   } else {
     // image selected 
     transformer.nodes(selected_imgs)
     select_layer.add(transformer)
+    if (stage.value?.getChildren().indexOf(select_layer) === -1) {
+      stage.value?.add(select_layer)
+    }
+    select_layer.batchDraw()
   }
 }
 
@@ -287,6 +337,7 @@ function unbindDragDrop() {
 
 function bindDragDrop() {
   const dropArea = document.getElementById('konva_container')
+  // TODO: change cursor to indicate if the drop is valid
   dropArea?.addEventListener('dragenter', preventDefault)
   dropArea?.addEventListener('dragleave', preventDefault)
   dropArea?.addEventListener('dragover', preventDefault)
@@ -303,11 +354,12 @@ function initKonva() {
   })
   UpdateKonvaCanvasSize()
   stage.value?.on('mousedown', handleStageMouseDown)
-  stage.value?.on('touchstart', handleStageTouchStart)
+  stage.value?.on('wheel', handleStageWheel)
+  stage.value?.on('touchstart', handleStageTouchStartDebounce)
 
   const img0 = new RefImage('https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png')
-  const img1 = new RefImage('https://konvajs.github.io/assets/lion.png')
-  const img2 = new RefImage('https://konvajs.github.io/assets/lion.png')
+  const img1 = new RefImage('https://img.alicdn.com/tfs/TB1G2Wd4UT1gK0jSZFrXXcNCXXa-114-128.png')
+  const img2 = new RefImage('https://img.alicdn.com/tfs/TB1GzimpJTfau8jSZFwXXX1mVXa-92-126.png')
   layers[0].add(img0)
   layers[0].add(img1)
   layers[2].add(img2)
@@ -325,13 +377,8 @@ function initKonva() {
     }
   })
 
-
   loadCanvas()
-  // TODO: add a procreate(or visref)-like grid background 添加一个类似procreate的网格背景
-  // a konva-react demo ref: https://codesandbox.io/s/react-konva-infinite-grid-kkndq?file=/src/index.js
 }
-
-
 </script>
 
 
@@ -361,18 +408,6 @@ function initKonva() {
     <v-main fluid id="konva_container">
     </v-main>
   </v-layout>
-
-  <!-- TODO: 两个layer，一个是编辑中的对象（可能多个），另一个是剩余的 -->
-  <!-- TODO: v-stage最终也会作为动态对象保存，保存一个-->
-  <!-- <v-stage ref='stage' :width='windowWidth' :height='windowHeight' @mousedown="handleStageMouseDown"
-    @touchStart='handleStageMouseDown'>
-    <v-layer ref='layer_select'>
-      <v-image v-for='selected_img in selected_imgs' :config='selected_img' />
-    </v-layer>
-    <v-layer>
-      <v-image v-for='ref_image in canvases[active_canvas_id].images' :config='ref_image' />
-    </v-layer>
-  </v-stage> -->
 </template>
 
 <style scoped>
