@@ -2,7 +2,6 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import Konva from 'konva'
 import { nanoid } from 'nanoid'
-import { KonvaEventObject } from 'konva/lib/Node'
 
 
 let windowWidth: number = window.innerWidth
@@ -29,16 +28,38 @@ function loadRefImageFromDataTransferItem(item: DataTransferItem) {
     const blob = item.getAsFile()
     if (blob == null) { return }
     const reader = new FileReader()
-    // create a new RefImage into the current canvas
+    const abspointer = stage.value?.getPointerPosition()
+    console.log('abspointer')
+    console.log(abspointer)
+    const pointer = stage.value?.getRelativePointerPosition()
     reader.onload = () => {
-      const RefImg = new RefImage(reader.result as string)
-      layers[active_canvas_id.value].add(RefImg)
+      // create a new RefImage into the current canvas
+      RefImage.fromURL(reader.result as string, (img) => {
+        // If the abspointer is not in the center 80% of the screen,
+        // then maybe the pointer is not correct, 
+        // it's the location when the cursor moved out from the screen
+        // we need to set it invalid
+
+        // Move the Image so that the center of the image is at the pointer
+        console.log('pointer')
+        console.log(pointer)
+        if (pointer != undefined && document.hasFocus()) {
+          img.x(pointer.x)
+          img.y(pointer.y)
+        } else if (stage.value != null) {
+          console.log('fallback to the center')
+          img.x(((windowWidth / 2) / stage.value.scaleX() - stage.value.x()))
+          img.y(((windowHeight / 2) / stage.value.scaleY() - stage.value.y()))
+        }
+        flushBackSelectedImgs()
+        layers[active_canvas_id.value].add(img)
+      })
     }
     reader.readAsDataURL(blob)
   }
 }
 
-const preventDefault = (e: any) => { e.preventDefault() }
+const preventDefault = (e: Event) => { e.preventDefault() }
 
 const handlePaste = (pasteEvent: any) => {
   console.log('paste')
@@ -85,14 +106,24 @@ const transformerConfig = {
 const transformer = new Konva.Transformer(transformerConfig)
 
 class RefImage extends Konva.Image {
-  constructor(src: string) {
-    const data = new window.Image()
-    data.src = src
+  constructor(data: HTMLImageElement) {
     super({
       draggable: false,
-      image: data
+      image: data,
     })
     this.id(nanoid())
+    data.onload = () => {
+      this.offsetX(data.width / 2)
+      this.offsetY(data.height / 2)
+    }
+  }
+  static fromURL(url: string, callback: (img: Konva.Image) => void, onError?: OnErrorEventHandler | undefined): void {
+    Konva.Image.fromURL(url, (img: Konva.Image) => {
+      img.id(nanoid())
+      img.offsetX(img.width() / 2)
+      img.offsetY(img.height() / 2)
+      callback(img)
+    }, onerror)
   }
 }
 
@@ -163,14 +194,14 @@ function handleStageKeyDown(e: KeyboardEvent) {
   }
 }
 
-function handleStageWheel(e: KonvaEventObject<WheelEvent>) {
+let wheel_Y_offset = 0.0
+let WheelCanvasUnlockTimeout: NodeJS.Timeout
+function handleStageWheel(e: Konva.KonvaEventObject<WheelEvent>) {
   // stop default scrolling
   e.evt.preventDefault()
 
+  if (isMovingCanvas === false) { saveTransformingPositionDiff() }
   stageChildrenDragLock()
-
-  // zoom ratio
-  const scaleBy = 1.1
 
   const pointer = stage.value?.getPointerPosition()
   if (stage.value == null || pointer == null) { return }
@@ -181,11 +212,12 @@ function handleStageWheel(e: KonvaEventObject<WheelEvent>) {
     y: (pointer.y - stage.value.y()) / oldScale,
   }
 
-
   // how to scale? Zoom in? Or zoom out?
-  const direction = e.evt.deltaY > 0 ? -1 : 1
+  // const direction = e.evt.deltaY > 0 ? -1 : 1
+  wheel_Y_offset -= e.evt.deltaY
+  // determine zoom ratio by total wheel offset Y
+  const newScale = Math.exp(wheel_Y_offset / 500)
 
-  const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy
 
   stage.value.scaleX(newScale)
   stage.value.scaleY(newScale)
@@ -195,10 +227,16 @@ function handleStageWheel(e: KonvaEventObject<WheelEvent>) {
     y: pointer.y - mousePointTo.y * newScale,
   }
   stage.value.position(newPos)
-  stageChildrenDragUnLock()
+  // don't unlock the canvas too quickly
+  // add a debounce
+  clearTimeout(WheelCanvasUnlockTimeout)
+  WheelCanvasUnlockTimeout = setTimeout(() => {
+    if (isTransformerDragging) { restoreTransformingPositionDiff() }
+    stageChildrenDragUnLock()
+  }, 20)
 }
 
-function handleStageMouseUp(e: KonvaEventObject<MouseEvent>) {
+function handleStageMouseUp(e: Konva.KonvaEventObject<MouseEvent>) {
   if (e.evt.button == 1) {
     // release middle button, stop dragging canvas lock
     stageChildrenDragUnLock()
@@ -212,8 +250,29 @@ function handleStageMouseUp(e: KonvaEventObject<MouseEvent>) {
   }
 }
 
-let isTransformerDragging = false
+let relPositionDiffs: Map<string, [number, number]> = new Map()
+function saveTransformingPositionDiff() {
+  const relPosition = stage.value?.getRelativePointerPosition()
+  transformer.nodes().forEach((node) => {
+    if (relPosition != undefined && node.className == 'Image') {
+      relPositionDiffs.set(node.id(), [relPosition.x - node.x(), relPosition.y - node.y()])
+    }
+  })
+}
+function restoreTransformingPositionDiff() {
+  const relPosition = stage.value?.getRelativePointerPosition()
+  transformer.nodes().forEach((node) => {
+    if (node.className == 'Image') {
+      const relPositionDiff = relPositionDiffs.get(node.id())
+      if (relPosition != undefined && relPositionDiff != undefined) {
+        node.x(relPosition.x - relPositionDiff[0])
+        node.y(relPosition.y - relPositionDiff[1])
+      }
+    }
+  })
+}
 
+let isTransformerDragging = false
 function stageChildrenDragLock() {
   if (isMovingCanvas === false) {
     console.log('start canvas drag')
@@ -226,6 +285,7 @@ function stageChildrenDragLock() {
     transformer.stopDrag()
     transformer.stopTransform()
     layers[active_canvas_id.value].listening(false)
+    select_layer.getChildren().forEach((node) => { node.stopDrag() })
   }
 }
 
@@ -238,25 +298,25 @@ function stageChildrenDragUnLock() {
     isMovingCanvas = false
     if (isTransformerDragging) {
       transformer.nodes().forEach((node) => {
-        // restart node dragging
-        node.stopDrag()
         node.startDrag()
       })
     }
   }
 }
 
-function handleStageMouseDown(e: KonvaEventObject<MouseEvent>) {
-  const current_canvas = layers[active_canvas_id.value]
-  if (e.target == null || stage.value == null) { return }
-
+function handleStageMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
   // enable draggable for stage for middle-mosue-click
   if (e.evt.button == 1) {
     // canvas drag
-    if (!stage.value.isDragging()) {
+    if (stage.value?.isDragging() === false) {
       stageChildrenDragLock()
-      stage.value.startDrag() 
+      stage.value.startDrag()
     }
+    return
+  }
+
+  if (e.evt.button == 2) {
+    //TODO: handle right click menu
     return
   }
 
@@ -268,7 +328,7 @@ function handleStageMouseDown(e: KonvaEventObject<MouseEvent>) {
     // if click on empty area - remove all transformers
     console.log('click on stage')
     flushBackSelectedImgs()
-  } else if (e.target.className === 'Image'){
+  } else if (e.target.className === 'Image') {
     // click on image
     console.log('click on image')
     console.log(e.target)
@@ -276,36 +336,34 @@ function handleStageMouseDown(e: KonvaEventObject<MouseEvent>) {
     const clicked_uuid = e.target.id()
     if (clicked_uuid == '') { return }
 
-    const refimg: RefImage = current_canvas.findOne('#' + clicked_uuid)
-    if (refimg == null) {
+    if (select_layer.findOne('#' + clicked_uuid) != null) {
       // the current image is already selected, start dragging
     } else {
       // flush back the current selected image
       // TODO: add selection rectangle to multi-select 
       flushBackSelectedImgs()
       // move the image from current canvas to select layer
-      refimg.moveTo(select_layer)
+      e.target.moveTo(select_layer)
       updateTransformer()
     }
-    if (!isMovingCanvas && !e.target.isDragging()) { e.target.startDrag() }
+    if (isMovingCanvas === false && e.target.isDragging() === false) { e.target.startDrag() }
   }
 }
 
 let CanvasTouchStartTimeOut: NodeJS.Timeout
-function handleStageTouchStartDebounce(e: KonvaEventObject<TouchEvent>) {
+function handleStageTouchStartDebounce(e: Konva.KonvaEventObject<TouchEvent>) {
   clearTimeout(CanvasTouchStartTimeOut)
-  CanvasTouchStartTimeOut = setTimeout(handleStageTouchStart, 50, e)
+  CanvasTouchStartTimeOut = setTimeout(handleStageTouchStart, 30, e)
+  handleStageTouchStart(e)
 }
 
-function handleStageTouchStart(e: KonvaEventObject<TouchEvent>) {
+function handleStageTouchStart(e: Konva.KonvaEventObject<TouchEvent>) {
   // due to the debounce, it may happen after canvas moving by 2-figers gesture
   // so we need to check if the canvas is moving
-  if (isMovingCanvas) { return }
+  if (isMovingCanvas === true) { return }
   if (e.target == null || stage.value == null) { return }
   // only handle 1-finger touch
   if (e.evt.touches.length > 1) { return }
-
-  const current_canvas = layers[active_canvas_id.value]
 
   if (e.target.getParent()?.className === 'Transformer') {
     // if click on transformer - do nothing
@@ -314,25 +372,24 @@ function handleStageTouchStart(e: KonvaEventObject<TouchEvent>) {
     // if click on empty area - remove all transformers
     console.log('click on stage')
     flushBackSelectedImgs()
-  } else if (e.target.className === 'Image'){
+  } else if (e.target.className === 'Image') {
     // click on image
     console.log('click on image')
 
     const clicked_uuid = e.target.id()
     if (clicked_uuid == '') { return }
 
-    const refimg: RefImage = current_canvas.findOne('#' + clicked_uuid)
-    if (refimg == null) {
+    if ( select_layer.findOne('#' + clicked_uuid) != null) {
       // the current image is already selected, abort
     } else {
       // flush back the current selected image
       // TODO: add selection rectangle to multi-select 
       flushBackSelectedImgs()
       // move the image from current canvas to select layer
-      refimg.moveTo(select_layer)
+      e.target.moveTo(select_layer)
       updateTransformer()
     }
-    if (!isMovingCanvas && !e.target.isDragging()) { e.target.startDrag() }
+    if (isMovingCanvas === false && e.target.isDragging() === false) { e.target.startDrag() }
   }
 }
 
@@ -340,13 +397,12 @@ function getDistance(p1: { x: number, y: number }, p2: { x: number, y: number })
   return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2))
 }
 
-var lastCenter: { x: number, y: number } | null = null
-var lastDist = 0
+let lastCenter: { x: number, y: number } | null = null
+let lastDist = 0
 
 function handleStageTouchMove(e: Konva.KonvaEventObject<TouchEvent>) {
-
   const finger_count = e.evt.touches.length
-  if (finger_count != 2) { return } 
+  if (finger_count < 2) { return }
 
   function getCenter(p1: { x: number, y: number }, p2: { x: number, y: number }) {
     return {
@@ -371,11 +427,11 @@ function handleStageTouchMove(e: Konva.KonvaEventObject<TouchEvent>) {
       stage_val.stopDrag()
     }
 
-    var p1 = {
+    const p1 = {
       x: touch1.clientX,
       y: touch1.clientY,
     }
-    var p2 = {
+    const p2 = {
       x: touch2.clientX,
       y: touch2.clientY,
     }
@@ -384,30 +440,30 @@ function handleStageTouchMove(e: Konva.KonvaEventObject<TouchEvent>) {
       lastCenter = getCenter(p1, p2)
       return
     }
-    var newCenter = getCenter(p1, p2)
+    const newCenter = getCenter(p1, p2)
 
-    var dist = getDistance(p1, p2)
+    const dist = getDistance(p1, p2)
 
     if (!lastDist) {
       lastDist = dist
     }
 
     // local coordinates of center point
-    var pointTo = {
+    const pointTo = {
       x: (newCenter.x - stage_val.x()) / stage_val.scaleX(),
       y: (newCenter.y - stage_val.y()) / stage_val.scaleX(),
     }
 
-    var scale = stage_val.scaleX() * (dist / lastDist)
+    const scale = stage_val.scaleX() * (dist / lastDist)
 
     stage_val.scaleX(scale)
     stage_val.scaleY(scale)
 
     // calculate new position of the stage
-    var dx = newCenter.x - lastCenter.x
-    var dy = newCenter.y - lastCenter.y
+    const dx = newCenter.x - lastCenter.x
+    const dy = newCenter.y - lastCenter.y
 
-    var newPos = {
+    const newPos = {
       x: newCenter.x - pointTo.x * scale + dx,
       y: newCenter.y - pointTo.y * scale + dy,
     }
@@ -497,20 +553,17 @@ function initKonva() {
   stage.value?.on('touchmove', handleStageTouchMove)
   stage.value?.on('touchend', handleStageTouchEnd)
 
-  const img0 = new RefImage('https://www.baidu.com/img/PCfb_5bf082d29588c07f842ccde3f97243ea.png')
-  const img1 = new RefImage('https://img.alicdn.com/tfs/TB1G2Wd4UT1gK0jSZFrXXcNCXXa-114-128.png')
-  const img2 = new RefImage('https://img.alicdn.com/tfs/TB1GzimpJTfau8jSZFwXXX1mVXa-92-126.png')
-  layers[0].add(img0)
-  layers[0].add(img1)
-  layers[2].add(img2)
+  RefImage.fromURL('https://img.alicdn.com/tfs/TB1GzimpJTfau8jSZFwXXX1mVXa-92-126.png', (img) => { layers[0].add(img) })
+  RefImage.fromURL('https://img.alicdn.com/tfs/TB1G2Wd4UT1gK0jSZFrXXcNCXXa-114-128.png', (img) => { layers[0].add(img) })
+  RefImage.fromURL('https://img.alicdn.com/tfs/TB1GzimpJTfau8jSZFwXXX1mVXa-92-126.png', (img) => { layers[2].add(img) })
 
   // add blob konva.image
   const url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAApgAAAKYB3X3/OAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAANCSURBVEiJtZZPbBtFFMZ/M7ubXdtdb1xSFyeilBapySVU8h8OoFaooFSqiihIVIpQBKci6KEg9Q6H9kovIHoCIVQJJCKE1ENFjnAgcaSGC6rEnxBwA04Tx43t2FnvDAfjkNibxgHxnWb2e/u992bee7tCa00YFsffekFY+nUzFtjW0LrvjRXrCDIAaPLlW0nHL0SsZtVoaF98mLrx3pdhOqLtYPHChahZcYYO7KvPFxvRl5XPp1sN3adWiD1ZAqD6XYK1b/dvE5IWryTt2udLFedwc1+9kLp+vbbpoDh+6TklxBeAi9TL0taeWpdmZzQDry0AcO+jQ12RyohqqoYoo8RDwJrU+qXkjWtfi8Xxt58BdQuwQs9qC/afLwCw8tnQbqYAPsgxE1S6F3EAIXux2oQFKm0ihMsOF71dHYx+f3NND68ghCu1YIoePPQN1pGRABkJ6Bus96CutRZMydTl+TvuiRW1m3n0eDl0vRPcEysqdXn+jsQPsrHMquGeXEaY4Yk4wxWcY5V/9scqOMOVUFthatyTy8QyqwZ+kDURKoMWxNKr2EeqVKcTNOajqKoBgOE28U4tdQl5p5bwCw7BWquaZSzAPlwjlithJtp3pTImSqQRrb2Z8PHGigD4RZuNX6JYj6wj7O4TFLbCO/Mn/m8R+h6rYSUb3ekokRY6f/YukArN979jcW+V/S8g0eT/N3VN3kTqWbQ428m9/8k0P/1aIhF36PccEl6EhOcAUCrXKZXXWS3XKd2vc/TRBG9O5ELC17MmWubD2nKhUKZa26Ba2+D3P+4/MNCFwg59oWVeYhkzgN/JDR8deKBoD7Y+ljEjGZ0sosXVTvbc6RHirr2reNy1OXd6pJsQ+gqjk8VWFYmHrwBzW/n+uMPFiRwHB2I7ih8ciHFxIkd/3Omk5tCDV1t+2nNu5sxxpDFNx+huNhVT3/zMDz8usXC3ddaHBj1GHj/As08fwTS7Kt1HBTmyN29vdwAw+/wbwLVOJ3uAD1wi/dUH7Qei66PfyuRj4Ik9is+hglfbkbfR3cnZm7chlUWLdwmprtCohX4HUtlOcQjLYCu+fzGJH2QRKvP3UNz8bWk1qMxjGTOMThZ3kvgLI5AzFfo379UAAAAASUVORK5CYII="
   fetch(url).then(res => res.blob()).then((blob) => {
-    const img = new Image()
+    const img = new window.Image()
     img.src = URL.createObjectURL(blob)
     img.onload = () => {
-      const RefImg = new RefImage('')
+      const RefImg = new RefImage(img)
       RefImg.image(img)
       RefImg.setSize({ width: 100, height: 100 })
       layers[0].add(RefImg)
@@ -523,13 +576,15 @@ function initKonva() {
   // we need to enable all events on Konva, even when we are dragging a node
   // so it triggers touchmove correctly
   Konva.hitOnDragEnabled = true
+  Konva.dragButtons = [0]
+  // Konva.pixelRatio = 1
 }
 </script>
 
 
 <template>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, user-scalable=no">
   <v-layout class='rounded rounded-md'>
     <v-app-bar fluid flat density='compact' color='#efefef' id='toolbar'>
       <v-btn variant='flat' color='primary' class='ml-3'>
