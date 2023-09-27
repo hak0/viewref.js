@@ -514,77 +514,77 @@ function updateTransformer() {
 
 let bg_mesh_x_map: Map<number, Konva.Line> = new Map()
 let bg_mesh_y_map: Map<number, Konva.Line> = new Map()
+
+function adjust_bg_lines([start, WIDTH, end]: [number, number, number], mesh_map: Map<number, Konva.Line>, new_position: Function) {
+  const strokeStyle = "#d0d0d0";
+  const lineWidth = 0.8;
+  let recycle_arr: Array<Konva.Line> = []
+  // recycle unused lines
+  for (const [key, line] of mesh_map) {
+    if (key < start || key > end) {
+      recycle_arr.push(line)
+      mesh_map.delete(key)
+    }
+  }
+  // draw new lines
+  for (let i = start; i <= end; i += WIDTH) {
+    const line = mesh_map.get(i)
+    const pts = line?.points()
+    if (line == undefined || pts == undefined) {
+      // if the desired position has no lines
+      const recycled_line = recycle_arr.pop()
+      if (recycled_line != undefined) {
+        // if there are unused lines, reuse them
+        mesh_map.set(i, recycled_line)
+        recycled_line.points(new_position(i))
+      } else {
+        // else, create new lines
+        const line = new Konva.Line({
+          points: new_position(i),
+          fillEnabled: false,
+          stroke: strokeStyle,
+          strokeWidth: lineWidth,
+          hitStrokeWidth: 0,
+          shadowForStrokeEnabled: false,
+          shadowEnabled: false,
+          listening: false,
+          draggable: false,
+          perfectDrawEnabled: false,
+        })
+        mesh_map.set(i, line)
+        bg_layer.add(line)
+      }
+    }
+    else {
+      // if the desired position has lines, adjust the position
+      line?.points(new_position(i))
+    }
+  }
+  // destroy unused recycle lines
+  recycle_arr.forEach((line) => { line.destroy() })
+}
+
 function draw_bg_mesh() {
   const WIDTH = 100
-  const HEIGHT = 100
   const stagePos = stage.value?.position() ?? { x: 0, y: 0 }
   const stageScale = stage.value?.scaleX() ?? 1
   const startX = Math.floor((-stagePos.x) / stageScale / WIDTH) * WIDTH;
   const endX = Math.ceil((-stagePos.x + windowWidth) / stageScale / WIDTH) * WIDTH
-  const startY = Math.floor((-stagePos.y) / stageScale / HEIGHT) * HEIGHT;
-  const endY = Math.ceil((-stagePos.y + windowHeight) / stageScale / HEIGHT) * HEIGHT
+  const startY = Math.floor((-stagePos.y) / stageScale / WIDTH) * WIDTH;
+  const endY = Math.ceil((-stagePos.y + windowHeight) / stageScale / WIDTH) * WIDTH
 
   // don't draw the grid if the scale is too small
-  if (stageScale < 0.08) { 
+  if (stageScale < 0.01) {
     bg_layer.hide()
-    return 
+    return
   } else {
     bg_layer.show()
   }
 
-  // TODO: remove unused(maybe lru or further than 1 screen) lines
-  const strokeStyle = "grey";
-  const lineWidth = 0.8;
   // verticle
-  for (let x = startX; x <= endX; x += WIDTH) {
-    const line = bg_mesh_x_map.get(x)
-    const pts = line?.points()
-    if (line == undefined || pts == undefined) {
-      const line = new Konva.Line({
-        points: [x, startY, x, endY],
-        fillEnabled: false,
-        stroke: strokeStyle,
-        strokeWidth: lineWidth,
-        hitStrokeWidth: 0,
-        shadowForStrokeEnabled: false,
-        shadowEnabled: false,
-        listening: false,
-        draggable: false,
-        perfectDrawEnabled: false,
-      })
-      bg_mesh_x_map.set(x, line)
-      bg_layer.add(line)
-    }
-    else {
-      line?.points([x, startY, x, endY])
-    }
-  }
+  adjust_bg_lines([startX, WIDTH, endX], bg_mesh_x_map, (i: number) => [i, startY, i, endY])
   // horizontal
-  for (let y = startY; y <= endY; y += HEIGHT) {
-    const line = bg_mesh_y_map.get(y)
-    const pts = line?.points()
-    if (line == undefined || pts == undefined) {
-      const line = new Konva.Line({
-        points: [startX, y, endX, y],
-        fillEnabled: false,
-        stroke: strokeStyle,
-        strokeWidth: lineWidth,
-        hitStrokeWidth: 0,
-        shadowForStrokeEnabled: false,
-        shadowEnabled: false,
-        listening: false,
-        draggable: false,
-        perfectDrawEnabled: false,
-      })
-      bg_mesh_y_map.set(y, line)
-      bg_layer.add(line)
-    }
-    else {
-      line?.points([startX, y, endX, y])
-    }
-  }
-
-  bg_layer.batchDraw()
+  adjust_bg_lines([startY, WIDTH, endY], bg_mesh_y_map, (i: number) => [startX, i, endX, i])
 }
 
 /// konva start:
@@ -627,7 +627,6 @@ function initKonva() {
   })
   UpdateKonvaCanvasSize()
   stage.value?.on('mousedown', handleStageMouseDown)
-  stage.value?.on('mousemove', draw_bg_mesh)
   stage.value?.on('mouseup', handleStageMouseUp)
   stage.value?.on('wheel', handleStageWheel)
   stage.value?.on('touchstart', handleStageTouchStartDebounce)
