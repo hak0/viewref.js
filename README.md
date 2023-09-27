@@ -61,7 +61,7 @@ See [Configuration Reference](https://vitejs.dev/config/).
 - [x] [multi-touch pan/zoom support](https://konvajs.org/docs/sandbox/Multi-touch_Scale_Stage.html)
 - [x] fix broken canvas pan when transformer is activated
 - [x] [grid background](https://konvajs.org/docs/sandbox/Multi-touch_Scale_Stage.html), maybe add the grid in a new fastlayer under stage or directly draw under the acvite layer
-    - [ ] performance optimization by recycling unused lines
+    - [x] performance optimization by recycling unused lines
 - [ ] [select on canvas](https://konvajs.org/docs/select_and_transform/Basic_demo.html)
 - [ ] menu to change vuetify theme, maybe material or customizable, at least a dark and a light mode
 - [ ] export/import all canvas(json/whole image?)
