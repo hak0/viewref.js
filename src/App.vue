@@ -140,6 +140,8 @@ class RefLayer extends Konva.Layer {
 const active_canvas_id = ref(0)
 const layers = Array.from(Array(6), (v, k) => (new RefLayer(k)))
 const select_layer = new RefLayer(999)
+const bg_layer = new Konva.Layer({ listening: false })
+
 // konva elements
 const stage = ref<Konva.Stage | null>(null)
 let isMovingCanvas = false
@@ -290,6 +292,7 @@ function stageChildrenDragLock() {
 }
 
 function stageChildrenDragUnLock() {
+  draw_bg_mesh()
   if (isMovingCanvas === true) {
     console.log('finish canvas drag')
     layers[active_canvas_id.value].listening(true)
@@ -379,7 +382,7 @@ function handleStageTouchStart(e: Konva.KonvaEventObject<TouchEvent>) {
     const clicked_uuid = e.target.id()
     if (clicked_uuid == '') { return }
 
-    if ( select_layer.findOne('#' + clicked_uuid) != null) {
+    if (select_layer.findOne('#' + clicked_uuid) != null) {
       // the current image is already selected, abort
     } else {
       // flush back the current selected image
@@ -509,16 +512,93 @@ function updateTransformer() {
   }
 }
 
+let bg_mesh_x_map: Map<number, Konva.Line> = new Map()
+let bg_mesh_y_map: Map<number, Konva.Line> = new Map()
+function draw_bg_mesh() {
+  const WIDTH = 100
+  const HEIGHT = 100
+  const stagePos = stage.value?.position() ?? { x: 0, y: 0 }
+  const stageScale = stage.value?.scaleX() ?? 1
+  const startX = Math.floor((-stagePos.x) / stageScale / WIDTH) * WIDTH;
+  const endX = Math.ceil((-stagePos.x + windowWidth) / stageScale / WIDTH) * WIDTH
+  const startY = Math.floor((-stagePos.y) / stageScale / HEIGHT) * HEIGHT;
+  const endY = Math.ceil((-stagePos.y + windowHeight) / stageScale / HEIGHT) * HEIGHT
+
+  // don't draw the grid if the scale is too small
+  if (stageScale < 0.08) { 
+    bg_layer.hide()
+    return 
+  } else {
+    bg_layer.show()
+  }
+
+  // TODO: remove unused(maybe lru or further than 1 screen) lines
+  const strokeStyle = "grey";
+  const lineWidth = 0.8;
+  // verticle
+  for (let x = startX; x <= endX; x += WIDTH) {
+    const line = bg_mesh_x_map.get(x)
+    const pts = line?.points()
+    if (line == undefined || pts == undefined) {
+      const line = new Konva.Line({
+        points: [x, startY, x, endY],
+        fillEnabled: false,
+        stroke: strokeStyle,
+        strokeWidth: lineWidth,
+        hitStrokeWidth: 0,
+        shadowForStrokeEnabled: false,
+        shadowEnabled: false,
+        listening: false,
+        draggable: false,
+        perfectDrawEnabled: false,
+      })
+      bg_mesh_x_map.set(x, line)
+      bg_layer.add(line)
+    }
+    else {
+      line?.points([x, startY, x, endY])
+    }
+  }
+  // horizontal
+  for (let y = startY; y <= endY; y += HEIGHT) {
+    const line = bg_mesh_y_map.get(y)
+    const pts = line?.points()
+    if (line == undefined || pts == undefined) {
+      const line = new Konva.Line({
+        points: [startX, y, endX, y],
+        fillEnabled: false,
+        stroke: strokeStyle,
+        strokeWidth: lineWidth,
+        hitStrokeWidth: 0,
+        shadowForStrokeEnabled: false,
+        shadowEnabled: false,
+        listening: false,
+        draggable: false,
+        perfectDrawEnabled: false,
+      })
+      bg_mesh_y_map.set(y, line)
+      bg_layer.add(line)
+    }
+    else {
+      line?.points([startX, y, endX, y])
+    }
+  }
+
+  bg_layer.batchDraw()
+}
 
 /// konva start:
 function loadCanvas() {
-  // add the layer to the stage
   stage.value?.removeChildren()
+  stage.value?.add(bg_layer)
+  draw_bg_mesh()
+
+  // add the layer to the stage
   stage.value?.add(layers[active_canvas_id.value])
+
 
   // TODO: maybe restore data from json
   // instantialize the ref_images into canvas
-
 }
 
 function unbindDragDrop() {
@@ -547,6 +627,7 @@ function initKonva() {
   })
   UpdateKonvaCanvasSize()
   stage.value?.on('mousedown', handleStageMouseDown)
+  stage.value?.on('mousemove', draw_bg_mesh)
   stage.value?.on('mouseup', handleStageMouseUp)
   stage.value?.on('wheel', handleStageWheel)
   stage.value?.on('touchstart', handleStageTouchStartDebounce)
@@ -624,5 +705,13 @@ header {
 
 .navbtn {
   min-width: 2em;
+}
+
+.background_grid {
+  background:
+    radial-gradient(circle, #5a5a5a5a 1.5px, transparent 1.5px);
+  background-position: center;
+  background-repeat: repeat;
+  background-size: 40px 40px;
 }
 </style>
