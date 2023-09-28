@@ -252,12 +252,12 @@ function handleStageMouseUp(e: Konva.KonvaEventObject<MouseEvent>) {
   }
 }
 
-let relPositionDiffs: Map<string, [number, number]> = new Map()
+let relPositionDiffs: {[key: string]: [number, number]} = {}
 function saveTransformingPositionDiff() {
   const relPosition = stage.value?.getRelativePointerPosition()
   transformer.nodes().forEach((node) => {
     if (relPosition != undefined && node.className == 'Image') {
-      relPositionDiffs.set(node.id(), [relPosition.x - node.x(), relPosition.y - node.y()])
+      relPositionDiffs[node.id()] =  [relPosition.x - node.x(), relPosition.y - node.y()]
     }
   })
 }
@@ -265,7 +265,7 @@ function restoreTransformingPositionDiff() {
   const relPosition = stage.value?.getRelativePointerPosition()
   transformer.nodes().forEach((node) => {
     if (node.className == 'Image') {
-      const relPositionDiff = relPositionDiffs.get(node.id())
+      const relPositionDiff = relPositionDiffs[node.id()]
       if (relPosition != undefined && relPositionDiff != undefined) {
         node.x(relPosition.x - relPositionDiff[0])
         node.y(relPosition.y - relPositionDiff[1])
@@ -574,11 +574,13 @@ function draw_bg_mesh() {
   const endY = Math.ceil((-stagePos.y + windowHeight) / stageScale / WIDTH) * WIDTH
 
   // don't draw the grid if the scale is too small
-  if (stageScale < 0.01) {
+  if (stageScale < 0.08) {
     bg_layer.hide()
+    document.getElementById('konva_container')?.style.setProperty('background-color', '#fafafa')
     return
   } else {
     bg_layer.show()
+    document.getElementById('konva_container')?.style.removeProperty('background-color')
   }
 
   // verticle
